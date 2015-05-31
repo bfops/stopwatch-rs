@@ -1,0 +1,16 @@
+[package]
+
+name = "stopwatch"
+version = "0.0.0"
+authors = [
+  "Clark Gaebel <cg.wowus.cg@gmail.com>",
+  "Zeke Foppa <benjamin.foppa@gmail.com>",
+]
+
+[lib]
+name = "stopwatch"
+path = "lib.rs"
+
+[dependencies]
+log = "*"
+time = "*"
