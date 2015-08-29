@@ -2,7 +2,7 @@
 
 #[macro_use]
 extern crate log;
-extern crate time;
+extern crate time as std_time;
 
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
@@ -31,9 +31,9 @@ impl Stopwatch {
   #[inline]
   /// Times a function, updating stats as necessary.
   pub fn timed<T, F: FnOnce() -> T>(&mut self, event: F) -> T {
-    let then = time::precise_time_ns();
+    let then = std_time::precise_time_ns();
     let ret = event();
-    self.total_time += time::precise_time_ns() - then;
+    self.total_time += std_time::precise_time_ns() - then;
     self.number_of_windows += 1;
     ret
   }
@@ -75,9 +75,9 @@ impl TimerSet {
   /// This function is not marked `mut` because borrow checking is done
   /// dynamically.
   pub fn time<T, F: FnOnce() -> T>(&self, name: &str, f: F) -> T {
-    let then = time::precise_time_ns();
+    let then = std_time::precise_time_ns();
     let ret = f();
-    let total_time = time::precise_time_ns() - then;
+    let total_time = std_time::precise_time_ns() - then;
 
     let mut timers = self.timers.lock().unwrap();
     match timers.entry(name.to_string()) {
@@ -115,6 +115,21 @@ impl TimerSet {
 
 unsafe impl Send for TimerSet {}
 unsafe impl Sync for TimerSet {}
+
+thread_local!(static TIMERSET: TimerSet = TimerSet::new());
+
+/// Time with the thread-local `TimerSet`.
+pub fn time<T, F: FnOnce() -> T>(name: &str, f: F) -> T {
+  TIMERSET.with(|timerset| timerset.time(name, f))
+}
+
+pub fn clone() -> TimerSet {
+  TIMERSET.with(|timerset| {
+    TimerSet {
+      timers: Mutex::new(timerset.timers.lock().unwrap().clone()),
+    }
+  })
+}
 
 #[test]
 fn test_simple() {
