@@ -4,18 +4,17 @@
 extern crate log;
 extern crate time as std_time;
 
+use std::borrow::Borrow;
+use std::collections::VecDeque;
 use std::collections::HashMap;
-use std::collections::hash_map::Entry;
 use std::convert::AsRef;
 use std::sync::Mutex;
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 /// A simple stopwatch that can time events and print stats about them.
-pub struct Stopwatch {
-  /// The total amount of time clocked.
-  pub total_time: u64,
-  /// The number of time windows we've clocked.
-  pub number_of_windows: u64,
+struct Stopwatch {
+  /// All the clocked intervals
+  pub intervals: VecDeque<u64>,
 }
 
 impl Stopwatch {
@@ -23,36 +22,25 @@ impl Stopwatch {
   /// Creates a new stopwatch.
   pub fn new() -> Stopwatch {
     Stopwatch {
-      total_time: 0,
-      number_of_windows: 0,
+      intervals: VecDeque::new(),
     }
   }
 
-  #[inline]
-  /// Times a function, updating stats as necessary.
-  pub fn timed<T, F: FnOnce() -> T>(&mut self, event: F) -> T {
-    let then = std_time::precise_time_ns();
-    let ret = event();
-    self.total_time += std_time::precise_time_ns() - then;
-    self.number_of_windows += 1;
-    ret
+  pub fn push(&mut self, interval: u64) {
+    self.intervals.push_back(interval);
+    if self.intervals.len() > (1 << 15) {
+      self.intervals.pop_front();
+    }
   }
 
   /// Prints out timing statistics of this stopwatch.
-  fn print(&self, name: &str) {
-    if self.number_of_windows == 0 {
-      info!("{} never ran", name);
-    } else {
-      info!(
-        "{}: {}ms over {} samples (avg {}us)",
-        name,
-        self.total_time / 1000000,
-        self.number_of_windows,
-        (self.total_time / self.number_of_windows / 1000),
-      );
+  pub fn print(&self, name: &str) {
+    let mut as_string = String::new();
+    for interval in self.intervals.iter() {
+      as_string.push_str(format!("{:?} ", interval).borrow());
     }
+    info!("{} {}", name, as_string);
   }
-
 }
 
 unsafe impl Send for Stopwatch {}
@@ -79,22 +67,15 @@ impl TimerSet {
     trace!("Start timing {:?} at {:?}", name, then);
     let ret = f();
     let now = std_time::precise_time_ns();
-    let total_time = now - then;
-    trace!("Stop timing {:?} at {:?} ({:?}us)", name, now, total_time / 1000);
+    let interval = now - then;
+    trace!("Stop timing {:?} at {:?} ({:?}us)", name, now, interval / 1000);
 
     let mut timers = self.timers.lock().unwrap();
-    match timers.entry(name.to_string()) {
-      Entry::Occupied(mut entry) => {
-        entry.get_mut().number_of_windows += 1;
-        entry.get_mut().total_time += total_time;
-      },
-      Entry::Vacant(entry) => {
-        entry.insert(Stopwatch {
-          total_time: total_time,
-          number_of_windows: 1,
-        });
-      },
-    }
+    let stopwatch =
+      timers.entry(name.to_string())
+      .or_insert_with(|| Stopwatch::new())
+    ;
+    stopwatch.push(interval);
 
     ret
   }
