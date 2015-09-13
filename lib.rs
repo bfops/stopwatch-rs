@@ -76,8 +76,11 @@ impl TimerSet {
   /// dynamically.
   pub fn time<T, F: FnOnce() -> T>(&self, name: &str, f: F) -> T {
     let then = std_time::precise_time_ns();
+    trace!("Start timing {:?} at {:?}", name, then);
     let ret = f();
-    let total_time = std_time::precise_time_ns() - then;
+    let now = std_time::precise_time_ns();
+    let total_time = now - then;
+    trace!("Stop timing {:?} at {:?} ({:?}us)", name, now, total_time / 1000);
 
     let mut timers = self.timers.lock().unwrap();
     match timers.entry(name.to_string()) {
