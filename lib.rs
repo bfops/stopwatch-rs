@@ -36,10 +36,17 @@ impl Stopwatch {
   /// Prints out timing statistics of this stopwatch.
   pub fn print(&self, name: &str) {
     let mut as_string = String::new();
+    as_string.push_str(format!("{} = [", name).borrow());
+    let mut first = true;
     for interval in self.intervals.iter() {
-      as_string.push_str(format!("{:?} ", interval).borrow());
+      if !first {
+        as_string.push_str(",");
+      }
+      as_string.push_str(format!("{:?}", interval).borrow());
+      first = false;
     }
-    info!("{} {}", name, as_string);
+    as_string.push_str("];");
+    info!("{}", as_string);
   }
 }
 
