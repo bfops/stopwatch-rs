@@ -5,7 +5,6 @@ extern crate log;
 extern crate time as std_time;
 
 use std::collections::HashMap;
-use std::collections::hash_map::Entry;
 use std::convert::AsRef;
 use std::sync::Mutex;
 
@@ -83,18 +82,13 @@ impl TimerSet {
     trace!("Stop timing {:?} at {:?} ({:?}us)", name, now, total_time / 1000);
 
     let mut timers = self.timers.lock().unwrap();
-    match timers.entry(name.to_string()) {
-      Entry::Occupied(mut entry) => {
-        entry.get_mut().number_of_windows += 1;
-        entry.get_mut().total_time += total_time;
-      },
-      Entry::Vacant(entry) => {
-        entry.insert(Stopwatch {
-          total_time: total_time,
-          number_of_windows: 1,
-        });
-      },
+
+    if !timers.contains_key(name) {
+      timers.insert(name.to_string(), Stopwatch::new());
     }
+    let stopwatch = timers.get_mut(name).unwrap();
+    stopwatch.number_of_windows += 1;
+    stopwatch.total_time += total_time;
 
     ret
   }
