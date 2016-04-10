@@ -1,11 +1,18 @@
 //! Closure-timing data structure.
 
+extern crate fnv;
+extern crate time;
 #[macro_use]
 extern crate log;
-extern crate time as std_time;
+extern crate x86;
+
+mod tsc;
+
+use fnv::FnvHasher;
 
 use std::collections::HashMap;
 use std::convert::AsRef;
+use std::hash::BuildHasherDefault;
 use std::sync::Mutex;
 
 #[derive(Debug, Copy, Clone)]
@@ -30,24 +37,24 @@ impl Stopwatch {
   #[inline]
   /// Times a function, updating stats as necessary.
   pub fn timed<T, F: FnOnce() -> T>(&mut self, event: F) -> T {
-    let then = std_time::precise_time_ns();
+    let then = tsc::read();
     let ret = event();
-    self.total_time += std_time::precise_time_ns() - then;
+    self.total_time += tsc::read() - then;
     self.number_of_windows += 1;
     ret
   }
 
   /// Prints out timing statistics of this stopwatch.
-  fn print(&self, name: &str) {
+  fn print(&self, name: &str, tps: tsc::T) {
     if self.number_of_windows == 0 {
       info!("{} never ran", name);
     } else {
       info!(
         "{}: {}ms over {} samples (avg {}us)",
         name,
-        self.total_time / 1000000,
+        tsc::to_ms(self.total_time, tps),
         self.number_of_windows,
-        (self.total_time / self.number_of_windows / 1000),
+        tsc::to_us(self.total_time / self.number_of_windows, tps)
       );
     }
   }
@@ -59,13 +66,17 @@ unsafe impl Sync for Stopwatch {}
 
 /// A set of stopwatches for multiple, named events.
 pub struct TimerSet {
-  timers: Mutex<HashMap<String, Stopwatch>>,
+  ticks_per_second: tsc::T,
+  timers: Mutex<HashMap<String, Stopwatch, BuildHasherDefault<FnvHasher>>>,
 }
 
 impl TimerSet {
   /// Creates a new set of timers.
   pub fn new() -> TimerSet {
-    TimerSet { timers: Mutex::new(HashMap::new()) }
+    TimerSet {
+      ticks_per_second: tsc::ticks_per_second(),
+      timers: Mutex::new(HashMap::with_hasher(BuildHasherDefault::<FnvHasher>::default()))
+    }
   }
 
   /// Times the execution of a function, and logs it under a timer with
@@ -74,12 +85,12 @@ impl TimerSet {
   /// This function is not marked `mut` because borrow checking is done
   /// dynamically.
   pub fn time<T, F: FnOnce() -> T>(&self, name: &str, f: F) -> T {
-    let then = std_time::precise_time_ns();
+    let then = tsc::read();
     trace!("Start timing {:?} at {:?}", name, then);
     let ret = f();
-    let now = std_time::precise_time_ns();
+    let now = tsc::read();
     let total_time = now - then;
-    trace!("Stop timing {:?} at {:?} ({:?}us)", name, now, total_time / 1000);
+    trace!("Stop timing {:?} at {:?} ({:?}us)", name, now, tsc::to_us(total_time, self.ticks_per_second));
 
     let mut timers = self.timers.lock().unwrap();
 
@@ -105,7 +116,7 @@ impl TimerSet {
     timer_vec.sort_by(|&(k1, _), &(k2, _)| k1.cmp(k2));
 
     for &(name, ref timer) in timer_vec.iter() {
-      timer.print(name);
+      timer.print(name, self.ticks_per_second);
     }
   }
 }
@@ -123,6 +134,7 @@ pub fn time<T, F: FnOnce() -> T>(name: &str, f: F) -> T {
 pub fn clone() -> TimerSet {
   TIMERSET.with(|timerset| {
     TimerSet {
+      ticks_per_second: timerset.ticks_per_second,
       timers: Mutex::new(timerset.timers.lock().unwrap().clone()),
     }
   })

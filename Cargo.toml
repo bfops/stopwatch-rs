@@ -12,5 +12,7 @@ name = "stopwatch"
 path = "lib.rs"
 
 [dependencies]
+fnv = "*"
 log = "*"
 time = "*"
+x86 = "*"
