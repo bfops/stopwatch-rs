@@ -3,7 +3,7 @@
 use std::thread::sleep;
 use std::time::Duration;
 use time::precise_time_ns;
-use x86::time::rdtsc;
+use x86::bits64::time::rdtsc;
 
 /// A timestamp.
 pub type T = u64;
