@@ -1,25 +1,18 @@
 //! Closure-timing data structure.
 
-extern crate fnv;
-extern crate time;
+extern crate chrono;
 #[macro_use]
 extern crate log;
-extern crate x86;
-
-mod tsc;
-
-use fnv::FnvHasher;
 
 use std::collections::HashMap;
 use std::convert::AsRef;
-use std::hash::BuildHasherDefault;
 use std::sync::Mutex;
 
 #[derive(Debug, Copy, Clone)]
 /// A simple stopwatch that can time events and print stats about them.
 pub struct Stopwatch {
   /// The total amount of time clocked.
-  pub total_time: u64,
+  pub total_time: chrono::Duration,
   /// The number of time windows we've clocked.
   pub number_of_windows: u64,
 }
@@ -29,7 +22,7 @@ impl Stopwatch {
   /// Creates a new stopwatch.
   pub fn new() -> Stopwatch {
     Stopwatch {
-      total_time: 0,
+      total_time: chrono::Duration::zero(),
       number_of_windows: 0,
     }
   }
@@ -37,24 +30,32 @@ impl Stopwatch {
   #[inline]
   /// Times a function, updating stats as necessary.
   pub fn timed<T, F: FnOnce() -> T>(&mut self, event: F) -> T {
-    let then = tsc::read();
-    let ret = event();
-    self.total_time += tsc::read() - then;
+    let mut ret = None;
+    let time = chrono::Duration::span(|| ret = Some(event()));
+    self.total_time = self.total_time + time;
     self.number_of_windows += 1;
-    ret
+    ret.unwrap()
   }
 
   /// Prints out timing statistics of this stopwatch.
-  fn print(&self, name: &str, tps: tsc::T) {
+  fn print(&self, name: &str) {
     if self.number_of_windows == 0 {
       info!("{} never ran", name);
     } else {
+      let ms = self.total_time.num_milliseconds().to_string();
+      let avg_us = if let Some(us) = self.total_time
+        .num_microseconds()
+        .map(|us| us as u64) {
+        (us / self.number_of_windows).to_string()
+      } else {
+        "<overflow>".to_string()
+      };
       info!(
         "{}: {}ms over {} samples (avg {}us)",
         name,
-        tsc::to_ms(self.total_time, tps),
+        ms,
         self.number_of_windows,
-        tsc::to_us(self.total_time / self.number_of_windows, tps)
+        avg_us
       );
     }
   }
@@ -66,16 +67,14 @@ unsafe impl Sync for Stopwatch {}
 
 /// A set of stopwatches for multiple, named events.
 pub struct TimerSet {
-  ticks_per_second: tsc::T,
-  timers: Mutex<HashMap<String, Stopwatch, BuildHasherDefault<FnvHasher>>>,
+  timers: Mutex<HashMap<String, Stopwatch>>,
 }
 
 impl TimerSet {
   /// Creates a new set of timers.
   pub fn new() -> TimerSet {
     TimerSet {
-      ticks_per_second: tsc::ticks_per_second(),
-      timers: Mutex::new(HashMap::with_hasher(BuildHasherDefault::<FnvHasher>::default()))
+      timers: Mutex::new(HashMap::new())
     }
   }
 
@@ -85,12 +84,8 @@ impl TimerSet {
   /// This function is not marked `mut` because borrow checking is done
   /// dynamically.
   pub fn time<T, F: FnOnce() -> T>(&self, name: &str, f: F) -> T {
-    let then = tsc::read();
-    trace!("Start timing {:?} at {:?}", name, then);
-    let ret = f();
-    let now = tsc::read();
-    let total_time = now - then;
-    trace!("Stop timing {:?} at {:?} ({:?}us)", name, now, tsc::to_us(total_time, self.ticks_per_second));
+    let mut ret = None;
+    let total_time = chrono::Duration::span(|| ret = Some(f()));
 
     let mut timers = self.timers.lock().unwrap();
 
@@ -99,9 +94,9 @@ impl TimerSet {
     }
     let stopwatch = timers.get_mut(name).unwrap();
     stopwatch.number_of_windows += 1;
-    stopwatch.total_time += total_time;
+    stopwatch.total_time = stopwatch.total_time + total_time;
 
-    ret
+    ret.unwrap()
   }
 
   /// Prints all the timer statistics to stdout, each tagged with their name.
@@ -116,7 +111,7 @@ impl TimerSet {
     timer_vec.sort_by(|&(k1, _), &(k2, _)| k1.cmp(k2));
 
     for &(name, ref timer) in timer_vec.iter() {
-      timer.print(name, self.ticks_per_second);
+      timer.print(name);
     }
   }
 }
@@ -134,7 +129,6 @@ pub fn time<T, F: FnOnce() -> T>(name: &str, f: F) -> T {
 pub fn clone() -> TimerSet {
   TIMERSET.with(|timerset| {
     TimerSet {
-      ticks_per_second: timerset.ticks_per_second,
       timers: Mutex::new(timerset.timers.lock().unwrap().clone()),
     }
   })
