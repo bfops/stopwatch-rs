@@ -62,9 +62,6 @@ impl Stopwatch {
 
 }
 
-unsafe impl Send for Stopwatch {}
-unsafe impl Sync for Stopwatch {}
-
 /// A set of stopwatches for multiple, named events.
 pub struct TimerSet {
   timers: Mutex<HashMap<String, Stopwatch>>,
@@ -115,9 +112,6 @@ impl TimerSet {
     }
   }
 }
-
-unsafe impl Send for TimerSet {}
-unsafe impl Sync for TimerSet {}
 
 thread_local!(static TIMERSET: TimerSet = TimerSet::new());
 
